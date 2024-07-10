@@ -1,0 +1,124 @@
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+
+// Configuración de la pantalla LCD I2C
+LiquidCrystal_I2C lcd(0x27, 16, 2); // Ajusta la dirección 0x27 según tu pantalla
+
+double periodo = 60000; // Periodo de un minuto
+int contador = 0;
+unsigned long tiempoAhora = 0;
+int valorFijado = 0;
+const int sensorHallPin = 2;
+unsigned long debounceTime = 100; // Ajustado el tiempo de debounce en milisegundos
+unsigned long lastDebounceTime = 0;
+const int botonReinicio = 7; // Pin del botón de reinicio
+unsigned long lastButtonPress = 0;
+bool buttonState = HIGH; // Estado actual del botón
+bool lastButtonState = HIGH; // Estado anterior del botón
+const unsigned long mensajeReinicioTime = 2000; // Tiempo que se muestra el mensaje de reinicio
+bool mostrarMensajeReinicio = false;
+unsigned long mensajeReinicioMillis = 0;
+
+enum EstadoBoton {
+  ESPERANDO,
+  DEBOUNCE,
+  PRESIONADO
+};
+
+EstadoBoton estadoBoton = ESPERANDO;
+
+void setup() {
+  pinMode(sensorHallPin, INPUT);
+  pinMode(botonReinicio, INPUT_PULLUP); // Configuración del pin con resistencia pull-up
+  Serial.begin(9600);
+  lcd.init();                      // Inicializa la pantalla LCD
+  lcd.backlight();                 // Enciende la retroiluminación
+  lcd.clear();                     // Limpia la pantalla LCD
+  lcd.setCursor(0, 0);
+  lcd.print("RPM: 0");
+}
+
+void loop() {
+  unsigned long currentTime = millis();
+  
+  // Lee el estado del botón
+  int reading = digitalRead(botonReinicio);
+
+  switch (estadoBoton) {
+    case ESPERANDO:
+      if (reading == LOW && lastButtonState == HIGH) {
+        estadoBoton = DEBOUNCE;
+        lastDebounceTime = currentTime;
+        Serial.println("Botón presionado, entrando en estado DEBOUNCE");
+      }
+      break;
+
+    case DEBOUNCE:
+      if ((currentTime - lastDebounceTime) > debounceTime) {
+        if (reading == LOW) {
+          estadoBoton = PRESIONADO;
+          lastButtonPress = currentTime;
+          contador = 0; // Reinicia el contador
+          tiempoAhora = millis(); // Reinicia el conteo de tiempo
+          lcd.setCursor(0, 1);
+          lcd.print("Restarting count ");
+          mostrarMensajeReinicio = true;
+          mensajeReinicioMillis = millis();
+          Serial.println("Botón validado, reiniciando conteo");
+        } else {
+          estadoBoton = ESPERANDO;
+          Serial.println("Botón no validado, regresando a estado ESPERANDO");
+        }
+      }
+      break;
+
+    case PRESIONADO:
+      if (reading == HIGH) {
+        estadoBoton = ESPERANDO;
+        Serial.println("Botón liberado, regresando a estado ESPERANDO");
+      }
+      break;
+  }
+
+  // Guarda el estado del botón
+  if (reading != lastButtonState) {
+    Serial.print("Estado del botón: ");
+    Serial.println(reading);
+    lastButtonState = reading;
+  }
+
+  // Mostrar mensaje de reinicio por un tiempo breve
+  if (mostrarMensajeReinicio) {
+    if (millis() - mensajeReinicioMillis > mensajeReinicioTime) {
+      mostrarMensajeReinicio = false;
+      lcd.setCursor(0, 1);
+      lcd.print("Counting RPM:     ");
+    }
+  } else {
+    // Cada un minuto imprime lo que esté acá
+    if (currentTime - tiempoAhora >= periodo) {
+      valorFijado = contador; // Valor fijado se vuelve contador para dejar fijado por un minuto lo que estaba.
+      Serial.println(contador); // Imprime el contador en el monitor Serial
+      tiempoAhora = currentTime;
+      lcd.setCursor(0, 0);       // Establece el cursor en la posición inicial
+      lcd.print("RPM: ");        // Muestra el texto "RPM: " en la pantalla LCD
+      lcd.print(valorFijado);    // Muestra el valor fijado en la pantalla LCD
+      lcd.print("          ");   // Borra cualquier texto residual
+      contador = 0;              // Reiniciamos contador
+    }
+
+    // Detecto imán lo cual es igual a una vuelta
+    if (digitalRead(sensorHallPin) == LOW) {
+      if (currentTime - lastDebounceTime >= debounceTime) {
+        lastDebounceTime = currentTime;
+        contador++;
+      }
+    }
+
+    // Imprime como van avanzando las RPM y al minuto reinicia
+    lcd.setCursor(0, 1);       // Establece el cursor en la segunda línea
+    lcd.print("Countin RPM: ");
+    lcd.print(contador);       // Muestra el contador en la pantalla LCD
+    lcd.print("     ");        // Borra cualquier texto residual
+  }
+}
